@@ -5,6 +5,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PyQt5 import QtWidgets, QtCore
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+import numpy as np
 import matplotlib
 import threading
 import random
@@ -21,8 +22,8 @@ L_MIN_RANGE = -L_MAX_RANGE
 TAO = 2e-12
 
 # Параметры отрисовки
-MPL_MAX_RANGE = 100.
-MPL_MIN_RANGE = -100.
+MPL_MAX_RANGE = 101.
+MPL_MIN_RANGE = -101.
 MPL_RADIUS = 2.
 
 class Particle:
@@ -52,14 +53,18 @@ class Particle:
         y = MPL_MIN_RANGE + k * (self.y - L_MIN_RANGE)
         return x, y
 
+class ParticleConfiguration:
+    def __init__(self):
+        print(1)
+
 class MplCanvas(FigureCanvas):
     """ Функция отрисовки """
-    def __init__(self, dpi=100):
+    def __init__(self, b, dpi=100):
         self.fig = Figure(dpi=dpi, facecolor=(.94, .94, .94))
 
         # Добавление области графа
         self.ax = self.fig.add_subplot(111, aspect='equal')
-        self.clear_plot()
+        self.clear_plot(b)
 
         # Инициализация
         FigureCanvas.__init__(self, self.fig)
@@ -68,27 +73,49 @@ class MplCanvas(FigureCanvas):
 
     def plot_circle(self, particle):
         # Рисование границ ячейки
-        self.plot_cell()
         x, y = particle.transform_world_to_screen()
         circle = plt.Circle((x, y), MPL_RADIUS, facecolor="red", fill=True,
                             linewidth=0.5, antialiased=True, edgecolor="black")
         self.ax.add_patch(circle)
 
-    def plot_cell(self):
+    def plot_cell(self, b):
+        self.ax.set_xlim(MPL_MIN_RANGE, MPL_MAX_RANGE)
+        self.ax.set_ylim(MPL_MIN_RANGE, MPL_MAX_RANGE)
+
+        # Сокрытие подписей осей
+        self.ax.set_yticklabels([])
+        self.ax.set_xticklabels([])
+
+        # Отображения сетки - периода решетки
+        # Перевод b в экранные координаты
+        particle = Particle(b, 0)
+        step, _ = particle.transform_world_to_screen()
+        xy_positive = np.arange(0, MPL_MAX_RANGE, step/2.)
+        xy_negative = xy_positive[::-1]
+        xy_negative = [-x for x in xy_negative]
+        xy_ticks = xy_negative + xy_positive
+
+        self.ax.set_xticks(xy_ticks)
+        self.ax.set_yticks(xy_ticks)
+
+        self.ax.grid(linestyle="dotted", alpha=0.25)
+
         cell = plt.Rectangle((MPL_MIN_RANGE, MPL_MIN_RANGE),
                              2 * MPL_MAX_RANGE,
                              2 * MPL_MAX_RANGE,
                              color="black", fill=False, linestyle='dashdot')
         self.ax.add_patch(cell)
 
-    def clear_plot(self):
+    def clear_plot(self, b):
         self.ax.clear()
-        self.ax.set_xlim(MPL_MIN_RANGE, MPL_MAX_RANGE)
-        self.ax.set_ylim(MPL_MIN_RANGE, MPL_MAX_RANGE)
+        self.plot_cell(b)
 
-        # Сокрытие подписей осей
-        self.ax.get_yaxis().set_visible(False)
-        self.ax.get_xaxis().set_visible(False)
+    def get_ticks(self):
+        x_ticks = self.ax.get_xticks()
+        y_ticks = self.ax.get_yticks()
+        print("x_ticks: ", x_ticks)
+        print('y_ticks: ', y_ticks)
+        return x_ticks, y_ticks
 
 class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
     """ Класс-реализация интерфейса """
@@ -124,8 +151,13 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         self.set_particle_position_button.clicked.connect(self.draw_graph)
         self.clear_particle_position_button.clicked.connect(self.clear_graph)
 
+        self.cell_period_combo.currentTextChanged.connect(self.cell_period_combo_logic)
+
+    def cell_period_combo_logic(self, value):
+        self.clear_graph()
+
     def add_mpl(self):
-        self.canvas = MplCanvas()
+        self.canvas = MplCanvas(self.calc_b())
         self.toolbar = NavigationToolbar(self.canvas, self.canvas)
         self.verticalLayout_10.addWidget(self.canvas)
 
@@ -136,13 +168,18 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         particle = Particle(x, y)
 
         # Отрисовка
-        self.canvas.clear_plot()
+        self.canvas.clear_plot(self.calc_b())
         self.canvas.plot_circle(particle)
         self.canvas.draw()
 
     def clear_graph(self):
-        self.canvas.clear_plot()
+        self.canvas.clear_plot(self.calc_b())
         self.canvas.draw()
+
+    def calc_b(self):
+        b = self.cell_period_combo.currentText()
+        b = float(b) * float(self.a_parameter_edit.text())
+        return b
 
 class StoppableThread(threading.Thread):
     """ Поток для вычисления переданной функции """
