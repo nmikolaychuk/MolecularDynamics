@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib
 import threading
-import random
+import math
 import sys
 matplotlib.use('QT5Agg')
 
@@ -16,10 +16,17 @@ matplotlib.use('QT5Agg')
 PARTICLE_DIAMETER = 0.382e-9
 PARTICLE_RADIUS = PARTICLE_DIAMETER / 2.
 PARTICLE_MASS = 6.6335209e-26
+# Параметры ячейки
 L_CELL = 30. * PARTICLE_DIAMETER
 L_MAX_RANGE = L_CELL / 2.
 L_MIN_RANGE = -L_MAX_RANGE
+# Характерное время системы
 TAO = 2e-12
+# Параметры обрезания
+R1 = 1.1 * PARTICLE_DIAMETER
+R2 = 1.8 * PARTICLE_DIAMETER
+# Модуль потенциальной энергии взаимодействия при равновесии
+D = 0.0103 * 1.602176487e-19
 
 # Параметры отрисовки
 MPL_MAX_RANGE = 101.
@@ -53,9 +60,43 @@ class Particle:
         y = MPL_MIN_RANGE + k * (self.y - L_MIN_RANGE)
         return x, y
 
+    def transform_screen_to_world(self):
+        del_xy_screen = MPL_MAX_RANGE - MPL_MIN_RANGE
+        del_xy_world = L_MAX_RANGE - L_MIN_RANGE
+        k = del_xy_screen / del_xy_world
+        x = self.x - MPL_MIN_RANGE + k * L_MIN_RANGE
+        x /= k
+        y = self.y - MPL_MIN_RANGE + k * L_MIN_RANGE
+        y /= k
+        return x, y
+
 class ParticleConfiguration:
-    def __init__(self):
-        print(1)
+    def __init__(self, particles_quantity, b_parameter, canvas):
+        self.particles_quantity = particles_quantity
+        self.b = b_parameter
+        self.canvas = canvas
+        self.ticks, _ = self.canvas.get_ticks()
+
+    def configure_particles(self):
+        configuration_coordinates = []
+        # ВАЖНО! Рассматривается ТОЛЬКО число частиц формата n*n
+        particles_count_in_line = round(math.sqrt(self.particles_quantity))
+        for i in range(0, particles_count_in_line):
+            middle_index = math.trunc(len(self.ticks) / 2)
+            configuration_coordinates.append(self.ticks[middle_index])
+            self.ticks.pop(middle_index)
+
+        configuration = []
+        for coord_y in configuration_coordinates:
+            for coord_x in configuration_coordinates:
+                particle = Particle(coord_x, coord_y)
+                x, y = particle.transform_screen_to_world()
+                particle.x = x
+                particle.y = y
+
+                configuration.append(particle)
+
+        return configuration
 
 class MplCanvas(FigureCanvas):
     """ Функция отрисовки """
@@ -74,9 +115,13 @@ class MplCanvas(FigureCanvas):
     def plot_circle(self, particle):
         # Рисование границ ячейки
         x, y = particle.transform_world_to_screen()
-        circle = plt.Circle((x, y), MPL_RADIUS, facecolor="red", fill=True,
-                            linewidth=0.5, antialiased=True, edgecolor="black")
+        circle = plt.Circle((x, y), MPL_RADIUS, facecolor='white', fill=True,
+                            linewidth=0.9, antialiased=True, edgecolor="red")
         self.ax.add_patch(circle)
+
+    def plot_configuration(self, list_of_particles):
+        for p in list_of_particles:
+            self.plot_circle(p)
 
     def plot_cell(self, b):
         self.ax.set_xlim(MPL_MIN_RANGE, MPL_MAX_RANGE)
@@ -111,10 +156,8 @@ class MplCanvas(FigureCanvas):
         self.plot_cell(b)
 
     def get_ticks(self):
-        x_ticks = self.ax.get_xticks()
-        y_ticks = self.ax.get_yticks()
-        print("x_ticks: ", x_ticks)
-        print('y_ticks: ', y_ticks)
+        x_ticks = list(self.ax.get_xticks())
+        y_ticks = list(self.ax.get_yticks())
         return x_ticks, y_ticks
 
 class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
@@ -143,15 +186,14 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         self.a_parameter_edit.setText(str(PARTICLE_DIAMETER))
         self.tao_parameter_edit.setText(str(TAO))
         self.timestep_parameter_edit.setText(str(0.01 * TAO))
+        self.config = []
 
-        # Связывание виджета анимации
+        # Связывание элементов управления
         self.add_mpl()
-
-        # Кнопка запуска
         self.set_particle_position_button.clicked.connect(self.draw_graph)
         self.clear_particle_position_button.clicked.connect(self.clear_graph)
-
         self.cell_period_combo.currentTextChanged.connect(self.cell_period_combo_logic)
+        self.start_button.clicked.connect(self.start_button_logic)
 
     def cell_period_combo_logic(self, value):
         self.clear_graph()
@@ -163,13 +205,18 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
 
     def draw_graph(self):
         # Случайная частица
-        x = random.uniform(L_MIN_RANGE, L_MAX_RANGE)
-        y = random.uniform(L_MIN_RANGE, L_MAX_RANGE)
-        particle = Particle(x, y)
+        # x = random.uniform(L_MIN_RANGE, L_MAX_RANGE)
+        # y = random.uniform(L_MIN_RANGE, L_MAX_RANGE)
+        # particle = Particle(x, y)
+
+        configurator = ParticleConfiguration(int(self.count_of_particles_combo.currentText()),
+                                             self.calc_b(),
+                                             self.canvas)
+        self.config = configurator.configure_particles()
 
         # Отрисовка
         self.canvas.clear_plot(self.calc_b())
-        self.canvas.plot_circle(particle)
+        self.canvas.plot_configuration(self.config)
         self.canvas.draw()
 
     def clear_graph(self):
@@ -180,6 +227,60 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         b = self.cell_period_combo.currentText()
         b = float(b) * float(self.a_parameter_edit.text())
         return b
+
+    def distance(self, particle1, particle2):
+        """ Расстояние между частицами """
+        dx = particle2.x - particle1.x
+        dy = particle2.y - particle1.y
+        distance = math.sqrt(dx ** 2 + dy ** 2)
+        return distance
+
+    def calculate_cutoff_ratio(self, distance):
+        """ Вычисление коэффициента обрезания """
+        if distance <= R1:
+            return 1
+        elif R1 <= distance <= R2:
+            upper = distance - R1
+            lower = R1 - R2
+            buffer = (upper / lower) ** 2
+            result = (1 - buffer) ** 2
+            return result
+        elif distance >= R2:
+            return 0
+
+    def potential_of_lennard_jones(self, particle1, particle2):
+        """ Вычисление модифицированного потенциала Л-Д """
+        # Обозначение переменных
+        e = D
+        sigma = float(self.a_parameter_edit.text())
+        root_of = 6
+        sigma = sigma / 2 ** (1/float(root_of))
+        distance = self.distance(particle1, particle2)
+        K = self.calculate_cutoff_ratio(distance)
+
+        # Вычисление потенциала
+        buffer_first = (sigma / distance) ** 12
+        buffer_second = (sigma / distance) ** 6
+        potential = 4 * e * (buffer_first - buffer_second) * K
+        return potential
+
+    def interaction_of_two_particles(self):
+        potential = 0.0
+        for i, i_particle in enumerate(self.config):
+            for j, j_particle in enumerate(self.config):
+                if i < j:
+                    potential += self.potential_of_lennard_jones(i_particle, j_particle)
+
+        print("Рассчитанный потенциал: ", potential)
+        print("2*D*N: ", 2. * D * float(len(self.config)))
+        return potential
+
+    def start_button_logic(self):
+        if len(self.config) > 0:
+            self.interaction_of_two_particles()
+        else:
+            print("[+] Нет размещенных частиц!")
+
 
 class StoppableThread(threading.Thread):
     """ Поток для вычисления переданной функции """
