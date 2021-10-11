@@ -2,14 +2,16 @@ import interface_main_app
 
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib import animation
 from PyQt5 import QtWidgets, QtCore
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
+import threading
 import numpy as np
 import matplotlib
-import threading
 import math
 import sys
+import time
 matplotlib.use('QT5Agg')
 
 # Параметры частиц
@@ -22,6 +24,7 @@ L_MAX_RANGE = L_CELL / 2.
 L_MIN_RANGE = -L_MAX_RANGE
 # Характерное время системы
 TAO = 2e-12
+STEPS = 5000
 # Параметры обрезания
 R1 = 1.1 * PARTICLE_DIAMETER
 R2 = 1.8 * PARTICLE_DIAMETER
@@ -49,7 +52,8 @@ class Particle:
         self.Ep = 0.0
         # Сила, действующая на i-ю частицу со стороны всех
         # других частиц
-        self.F = 0.0
+        self.Fx = 0.0
+        self.Fy = 0.0
 
         # Масса [кг]
         self.mass = m
@@ -77,10 +81,11 @@ class Particle:
         return x, y, rad
 
 class ParticleConfiguration:
-    def __init__(self, particles_quantity, a_parameter, b_parameter, canvas):
+    def __init__(self, particles_quantity, a_parameter, b_parameter, time_step, canvas):
         self.particles_quantity = particles_quantity
         self.a = a_parameter
         self.b = b_parameter
+        self.time_step = time_step
         self.canvas = canvas
         self.ticks, _ = self.canvas.get_ticks()
         self.configuration = []
@@ -90,6 +95,9 @@ class ParticleConfiguration:
         self.E = 0.0
         self.Ek = 0.0
         self.Ep = 0.0
+
+        self.calculate_potential_for_particle()
+        self.calculate_forces()
 
     def configure_particles(self):
         configuration_coordinates = []
@@ -168,9 +176,11 @@ class ParticleConfiguration:
     def calculate_full_energy(self):
         self.E = self.Ek + self.Ep
         print("Полная энергия: ", self.E)
+        print("\n")
 
     # Расчет сил, координат и скоростей
     def calculate_potential_for_particle(self):
+        """ Расчет потецниальной энергии для каждой частицы """
         for i, i_particle in enumerate(self.configuration):
             potential = 0.0
             for j, j_particle in enumerate(self.configuration):
@@ -179,11 +189,62 @@ class ParticleConfiguration:
             i_particle.Ep = potential
 
     def calculate_forces(self):
-        print(1)
+        """ Расчет сил """
+        r0_6 = PARTICLE_DIAMETER ** 6
+        for i, i_particle in enumerate(self.configuration):
+            du_dx_sum = 0.0
+            du_dy_sum = 0.0
+            for j, j_particle in enumerate(self.configuration):
+                if i != j:
+                    # Квадрат расстояния между центрами i и j частицы
+                    rij_2 = (i_particle.x - j_particle.x) ** 2 + (i_particle.y - j_particle.y) ** 2
+                    buffer_x = (i_particle.x - j_particle.x) / rij_2 ** 4
+                    buffer_y = (i_particle.y - j_particle.y) / rij_2 ** 4
+                    # Рассчет обрезающего множителя
+                    dist = self.distance(i_particle, j_particle)
+                    K = self.calculate_cutoff_ratio(dist)
+                    du_dx_sum += (r0_6 / rij_2 ** 3 - 1) * buffer_x * K
+                    du_dy_sum += (r0_6 / rij_2 ** 3 - 1) * buffer_y * K
+
+            du_dx = -12 * D * r0_6 * du_dx_sum
+            du_dy = -12 * D * r0_6 * du_dy_sum
+            i_particle.Fx = -du_dx
+            i_particle.Fy = -du_dy
 
     def calculate_verle(self):
-        print(1)
+        """ Скоростная форма алгоритма Верле """
+        Fk_x = []
+        Fk_y = []
+        for i_particle in self.configuration:
+            # Расчет координат
+            # Координата X
+            accel_x = i_particle.Fx / (2 * i_particle.mass)
+            accel_x *= self.time_step ** 2
+            x_new = i_particle.x + i_particle.vx * self.time_step + accel_x
+            i_particle.x = x_new
+            Fk_x.append(i_particle.Fx)
 
+            # Координата Y
+            accel_y = i_particle.Fy / (2 * i_particle.mass)
+            accel_y *= self.time_step ** 2
+            y_new = i_particle.y + i_particle.vy * self.time_step + accel_y
+            i_particle.y = y_new
+            Fk_y.append(i_particle.Fy)
+
+        # Пересчет сил
+        self.calculate_forces()
+
+        for i, i_particle in enumerate(self.configuration):
+            # Расчет скоростей
+            # Vx
+            accel_avg_x = (i_particle.Fx + Fk_x[i]) / (2. * i_particle.mass)
+            accel_avg_x *= self.time_step
+            i_particle.vx += accel_avg_x
+
+            # Vy
+            accel_avg_y = (i_particle.Fy + Fk_y[i]) / (2. * i_particle.mass)
+            accel_avg_y *= self.time_step
+            i_particle.vy += accel_avg_y
 
 class MplCanvas(FigureCanvas):
     """ Функция отрисовки """
@@ -203,12 +264,13 @@ class MplCanvas(FigureCanvas):
         # Рисование границ ячейки
         x, y, rad = particle.transform_world_to_screen()
         circle = plt.Circle((x, y), rad, facecolor='white', fill=True,
-                            linewidth=0.9, antialiased=True, edgecolor="red")
+                            linewidth=0.9, antialiased=True, edgecolor="blue")
         self.ax.add_patch(circle)
 
-    def plot_configuration(self, list_of_particles):
+    def plot_configuration(self, list_of_particles, title=""):
         for p in list_of_particles:
             self.plot_circle(p)
+            self.ax.set_title(title)
 
     def plot_cell(self, b):
         self.ax.set_xlim(MPL_MIN_RANGE, MPL_MAX_RANGE)
@@ -271,39 +333,59 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         # Вывод информации в GUI
         self.l_cell_edit.setText(str(L_CELL))
         self.a_parameter_edit.setText(str(PARTICLE_DIAMETER))
-        self.tao_parameter_edit.setText(str(TAO))
+        self.steps_quantity.setText(str(STEPS))
         self.timestep_parameter_edit.setText(str(0.01 * TAO))
-        self.config = []
+        self.cfg = None
 
         # Связывание элементов управления
         self.add_mpl()
-        self.set_particle_position_button.clicked.connect(self.draw_graph)
+        self.set_particle_position_button.clicked.connect(self.set_start_config)
         self.clear_particle_position_button.clicked.connect(self.clear_graph)
         self.cell_period_combo.currentTextChanged.connect(self.cell_period_combo_logic)
+        self.steps_quantity.textChanged.connect(self.steps_quantity_logic)
         self.start_button.clicked.connect(self.start_button_logic)
+        self.stop_button.clicked.connect(self.stop_button_logic)
 
-    def cell_period_combo_logic(self, value):
+        self.steps = STEPS
+        self.anim = None
+        self.paused = False
+        self.frame = 0
+        self.is_started = False
+        self.thread = StoppableThread(self.calculation)
+
+    def cell_period_combo_logic(self):
         self.clear_graph()
+
+    def steps_quantity_logic(self):
+        self.steps = self.steps_quantity.text()
 
     def add_mpl(self):
         self.canvas = MplCanvas(self.calc_b())
         self.toolbar = NavigationToolbar(self.canvas, self.canvas)
         self.verticalLayout_10.addWidget(self.canvas)
 
-    def draw_graph(self):
+    def set_start_config(self):
         # Конфигурация системы
         self.cfg = ParticleConfiguration(int(self.count_of_particles_combo.currentText()),
-                                             float(self.a_parameter_edit.text()),
-                                             self.calc_b(),
-                                             self.canvas)
+                                         float(self.a_parameter_edit.text()),
+                                         self.calc_b(),
+                                         float(self.timestep_parameter_edit.text()),
+                                         self.canvas)
+        self.draw_graph()
 
+    def draw_graph(self, title=""):
         # Отрисовка
         self.canvas.clear_plot(self.calc_b())
-        self.canvas.plot_configuration(self.cfg.configuration)
+        self.canvas.plot_configuration(self.cfg.configuration, title)
         self.canvas.draw()
+        self.canvas.flush_events()
+        time.sleep(0.1)
 
     def clear_graph(self):
         self.canvas.clear_plot(self.calc_b())
+        self.is_started = False
+        self.paused = False
+        self.frame = 0
         self.canvas.draw()
 
     def calc_b(self):
@@ -311,14 +393,33 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         b = float(b) * float(self.a_parameter_edit.text())
         return b
 
+    def calculation(self):
+        self.cfg.calculate_verle()
+        self.cfg.calculate_kinetic()
+        self.cfg.calculate_potential()
+        self.cfg.calculate_full_energy()
+        self.frame += 1
+        if self.frame % 25 == 0:
+            self.draw_graph("Временной шаг: %s" % str(self.frame))
+        if self.frame >= int(self.steps):
+            self.thread.is_finished = True
+            self.thread.stop()
+
     def start_button_logic(self):
-        if len(self.cfg.configuration) > 0:
-            self.cfg.calculate_potential()
-            self.cfg.calculate_kinetic()
-            self.cfg.calculate_full_energy()
-            self.cfg.calculate_potential_for_particle()
+        if len(self.cfg.configuration) > 0 and self.frame < int(self.steps):
+            if not self.thread.is_started:
+                self.thread.start()
+            elif self.thread.is_stopped() and self.thread.is_finished:
+                self.thread = StoppableThread(self.calculation)
+                self.thread.start()
         else:
-            print("[+] Нет размещенных частиц!")
+            print("[+] Нет размещенных частиц или закончились шаги по времени!")
+
+    def stop_button_logic(self):
+        print("stop")
+        if self.thread.is_started and not self.thread.is_stopped():
+            self.thread.stop()
+            self.thread.is_finished = True
 
 class StoppableThread(threading.Thread):
     """ Поток для вычисления переданной функции """
@@ -329,17 +430,14 @@ class StoppableThread(threading.Thread):
         self.is_started = False
         self.is_finished = False
         self.object = obj
-
     def run(self):
         """ Запуск потока """
         self.is_started = True
         while not self.is_stopped():
             self.object()
-
     def stop(self):
         """ Завершение потока с помощью Event """
         self._stop.set()
-
     def is_stopped(self):
         """ Проверка состояния потока """
         return self._stop.is_set()
