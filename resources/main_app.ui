@@ -10,7 +10,7 @@
     <x>0</x>
     <y>0</y>
     <width>1388</width>
-    <height>635</height>
+    <height>815</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -337,7 +337,7 @@
                    </font>
                   </property>
                   <property name="text">
-                   <string>Параметр &quot;τ&quot;</string>
+                   <string>Количество шагов</string>
                   </property>
                   <property name="alignment">
                    <set>Qt::AlignCenter</set>
@@ -345,7 +345,7 @@
                  </widget>
                 </item>
                 <item>
-                 <widget class="QLineEdit" name="tao_parameter_edit">
+                 <widget class="QLineEdit" name="steps_quantity">
                   <property name="sizePolicy">
                    <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
                     <horstretch>0</horstretch>
@@ -368,7 +368,7 @@
                    <set>Qt::AlignCenter</set>
                   </property>
                   <property name="readOnly">
-                   <bool>true</bool>
+                   <bool>false</bool>
                   </property>
                  </widget>
                 </item>
@@ -1053,7 +1053,7 @@
      <x>0</x>
      <y>0</y>
      <width>1388</width>
-     <height>21</height>
+     <height>26</height>
     </rect>
    </property>
   </widget>
