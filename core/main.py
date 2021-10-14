@@ -1,100 +1,42 @@
-import interface_main_app
+import random
 
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib import animation
+from mpl_widgets import MplAnimation, MplGraphics
 from PyQt5 import QtWidgets, QtCore
-from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
-import threading
-import numpy as np
+from global_variables import *
+import interface_main_app
 import matplotlib
+import threading
 import math
 import sys
 import time
 matplotlib.use('QT5Agg')
 
-# Параметры частиц
-PARTICLE_DIAMETER = 0.382e-9
-PARTICLE_RADIUS = PARTICLE_DIAMETER / 2.
-PARTICLE_MASS = 6.6335209e-26
-# Параметры ячейки
-L_CELL = 30. * PARTICLE_DIAMETER
-L_MAX_RANGE = L_CELL / 2.
-L_MIN_RANGE = -L_MAX_RANGE
-# Характерное время системы
-TAO = 2e-12
-STEPS = 5000
-# Параметры обрезания
-R1 = 1.1 * PARTICLE_DIAMETER
-R2 = 1.8 * PARTICLE_DIAMETER
-# Модуль потенциальной энергии взаимодействия при равновесии
-D = 0.0103 * 1.602176487e-19
-
-# Параметры отрисовки
-MPL_MAX_RANGE = 101.
-MPL_MIN_RANGE = -101.
-MPL_RADIUS = 1.
-
-class Particle:
-    def __init__(self, x, y, vx=0, vy=0, m=PARTICLE_MASS, radius=PARTICLE_RADIUS):
-        # Координаты [метр]
-        self.x = x
-        self.y = y
-
-        # Скорости [метр/с]
-        self.vx = vx
-        self.vy = vy
-
-        # Энергии [Дж]
-        # Потенциальная энергия взаимодействия частицы со
-        # всеми остальными частицами системы
-        self.Ep = 0.0
-        # Сила, действующая на i-ю частицу со стороны всех
-        # других частиц
-        self.Fx = 0.0
-        self.Fy = 0.0
-
-        # Масса [кг]
-        self.mass = m
-        self.radius = radius
-
-    def transform_world_to_screen(self):
-        del_xy_screen = MPL_MAX_RANGE - MPL_MIN_RANGE
-        del_xy_world = L_MAX_RANGE - L_MIN_RANGE
-        k = del_xy_screen / del_xy_world
-        x = MPL_MIN_RANGE + k * (self.x - L_MIN_RANGE)
-        y = MPL_MIN_RANGE + k * (self.y - L_MIN_RANGE)
-        rad = MPL_MIN_RANGE + k * (self.radius - L_MIN_RANGE)
-        return x, y, rad
-
-    def transform_screen_to_world(self):
-        del_xy_screen = MPL_MAX_RANGE - MPL_MIN_RANGE
-        del_xy_world = L_MAX_RANGE - L_MIN_RANGE
-        k = del_xy_screen / del_xy_world
-        x = self.x - MPL_MIN_RANGE + k * L_MIN_RANGE
-        x /= k
-        y = self.y - MPL_MIN_RANGE + k * L_MIN_RANGE
-        y /= k
-        rad = self.radius - MPL_MIN_RANGE + k * L_MIN_RANGE
-        rad /= k
-        return x, y, rad
 
 class ParticleConfiguration:
-    def __init__(self, particles_quantity, a_parameter, b_parameter, time_step, canvas):
+    def __init__(self, particles_quantity, a_parameter, b_parameter,
+                 time_step, canvas, is_coords_rand, is_speeds_rand):
         self.particles_quantity = particles_quantity
         self.a = a_parameter
         self.b = b_parameter
         self.time_step = time_step
         self.canvas = canvas
+        # Чекпоинты для внесения случайности в значения
+        self.is_coords_random = is_coords_rand
+        self.is_speeds_random = is_speeds_rand
+        self.rand_percent = 0.05
+        self.speeds_range_rand = 60
+
         self.ticks, _ = self.canvas.get_ticks()
         self.configuration = []
         self.configure_particles()
+        self.start_summary_pulse()
 
         # Энергии
         self.E = 0.0
         self.Ek = 0.0
         self.Ep = 0.0
+        self.temperature = 0.0
 
         self.calculate_potential_for_particle()
         self.calculate_forces()
@@ -112,10 +54,41 @@ class ParticleConfiguration:
             for coord_x in configuration_coordinates:
                 particle = Particle(coord_x, coord_y)
                 x, y, rad = particle.transform_screen_to_world()
+
+                if self.is_coords_random:
+                    rand_range = self.b * self.rand_percent
+                    x_rand = random.uniform(-rand_range, rand_range)
+                    y_rand = random.uniform(-rand_range, rand_range)
+                    x += x_rand
+                    y += y_rand
+
                 particle.x = x
                 particle.y = y
 
+                if self.is_speeds_random:
+                    x_rand = random.uniform(-self.speeds_range_rand, self.speeds_range_rand)
+                    y_rand = random.uniform(-self.speeds_range_rand, self.speeds_range_rand)
+                    particle.vx = x_rand
+                    particle.vy = y_rand
+
                 self.configuration.append(particle)
+
+    def start_summary_pulse(self):
+        vx_sum = 0.0
+        vy_sum = 0.0
+        for particle in self.configuration:
+            vx_sum += particle.vx
+            vy_sum += particle.vy
+
+        particles_count = len(self.configuration)
+        vx_sum /= particles_count
+        vy_sum /= particles_count
+
+        for particle in self.configuration:
+            particle.vx -= vx_sum
+            particle.vy -= vy_sum
+
+        print(vx_sum, vy_sum)
 
     # Расчет энергий
     def calculate_kinetic(self):
@@ -125,7 +98,7 @@ class ParticleConfiguration:
         kinetic_energy = PARTICLE_MASS / 2.
         kinetic_energy *= sum_v
         self.Ek = kinetic_energy
-        print("Кинетическая энергия: ", self.Ek)
+        # print("Кинетическая энергия: ", self.Ek)
 
     def distance(self, particle1, particle2):
         """ Расстояние между частицами """
@@ -171,12 +144,23 @@ class ParticleConfiguration:
                     potential_energy += self.potential_of_lennard_jones(i_particle, j_particle)
 
         self.Ep = potential_energy
-        print("Потенциальная энергия: ", self.Ep)
+        # print("Потенциальная энергия: ", self.Ep)
 
     def calculate_full_energy(self):
         self.E = self.Ek + self.Ep
-        print("Полная энергия: ", self.E)
-        print("\n")
+        # print("Полная энергия: ", self.E)
+
+    def calculate_temperature(self):
+        v_sum = 0.0
+        for particle in self.configuration:
+            v_sum += particle.vx ** 2 + particle.vy ** 2
+
+        upper = v_sum * self.configuration[0].mass
+        lower = 2.0 * len(self.configuration) * K_B
+        self.temperature = upper / lower
+        self.temperature -= 273.15
+        # print("Температура в системе: ", self.temperature)
+        # print('\n')
 
     # Расчет сил, координат и скоростей
     def calculate_potential_for_particle(self):
@@ -246,68 +230,6 @@ class ParticleConfiguration:
             accel_avg_y *= self.time_step
             i_particle.vy += accel_avg_y
 
-class MplCanvas(FigureCanvas):
-    """ Функция отрисовки """
-    def __init__(self, b, dpi=100):
-        self.fig = Figure(dpi=dpi, facecolor=(.94, .94, .94))
-
-        # Добавление области графа
-        self.ax = self.fig.add_subplot(111, aspect='equal')
-        self.clear_plot(b)
-
-        # Инициализация
-        FigureCanvas.__init__(self, self.fig)
-        FigureCanvas.setSizePolicy(self, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        FigureCanvas.updateGeometry(self)
-
-    def plot_circle(self, particle):
-        # Рисование границ ячейки
-        x, y, rad = particle.transform_world_to_screen()
-        circle = plt.Circle((x, y), rad, facecolor='white', fill=True,
-                            linewidth=0.9, antialiased=True, edgecolor="blue")
-        self.ax.add_patch(circle)
-
-    def plot_configuration(self, list_of_particles, title=""):
-        for p in list_of_particles:
-            self.plot_circle(p)
-            self.ax.set_title(title)
-
-    def plot_cell(self, b):
-        self.ax.set_xlim(MPL_MIN_RANGE, MPL_MAX_RANGE)
-        self.ax.set_ylim(MPL_MIN_RANGE, MPL_MAX_RANGE)
-
-        # Сокрытие подписей осей
-        self.ax.set_yticklabels([])
-        self.ax.set_xticklabels([])
-
-        # Отображения сетки - периода решетки
-        # Перевод b в экранные координаты
-        particle = Particle(b, 0)
-        step, _, _ = particle.transform_world_to_screen()
-        xy_positive = np.arange(0, MPL_MAX_RANGE, step/2.)
-        xy_negative = xy_positive[::-1]
-        xy_negative = [-x for x in xy_negative]
-        xy_ticks = xy_negative + xy_positive
-
-        self.ax.set_xticks(xy_ticks)
-        self.ax.set_yticks(xy_ticks)
-
-        self.ax.grid(linestyle="dotted", alpha=0.25)
-
-        cell = plt.Rectangle((MPL_MIN_RANGE, MPL_MIN_RANGE),
-                             2 * MPL_MAX_RANGE,
-                             2 * MPL_MAX_RANGE,
-                             color="black", fill=False, linestyle='dashdot')
-        self.ax.add_patch(cell)
-
-    def clear_plot(self, b):
-        self.ax.clear()
-        self.plot_cell(b)
-
-    def get_ticks(self):
-        x_ticks = list(self.ax.get_xticks())
-        y_ticks = list(self.ax.get_yticks())
-        return x_ticks, y_ticks
 
 class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
     """ Класс-реализация интерфейса """
@@ -335,6 +257,7 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         self.a_parameter_edit.setText(str(PARTICLE_DIAMETER))
         self.steps_quantity.setText(str(STEPS))
         self.timestep_parameter_edit.setText(str(0.01 * TAO))
+        self.graph_interval_edit.setText(str(GRAPH_INTERVAL))
         self.cfg = None
 
         # Связывание элементов управления
@@ -343,26 +266,74 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         self.clear_particle_position_button.clicked.connect(self.clear_graph)
         self.cell_period_combo.currentTextChanged.connect(self.cell_period_combo_logic)
         self.steps_quantity.textChanged.connect(self.steps_quantity_logic)
+        self.graph_interval_edit.textChanged.connect(self.graph_interval_logic)
         self.start_button.clicked.connect(self.start_button_logic)
         self.stop_button.clicked.connect(self.stop_button_logic)
+        self.rand_coord_check.clicked.connect(self.rand_coord_logic)
+        self.rand_speed_check.clicked.connect(self.rand_speed_logic)
 
         self.steps = STEPS
+        self.graph_interval = GRAPH_INTERVAL
         self.anim = None
         self.paused = False
         self.frame = 0
         self.is_started = False
         self.thread = StoppableThread(self.calculation)
 
+        self.average_e = 0.0
+        self.average_t = 0.0
+
+        self.x_values_e = []
+        self.y_values_e = []
+
+        self.x_values_t = []
+        self.y_values_t = []
+        self.counter = 0
+
+        self.is_coords_random = False
+        self.is_speeds_random = False
+
+    def rand_coord_logic(self):
+        if self.rand_coord_check.isChecked():
+            self.is_coords_random = True
+        else:
+            self.is_coords_random = False
+    def rand_speed_logic(self):
+        if self.rand_speed_check.isChecked():
+            self.is_speeds_random = True
+        else:
+            self.is_speeds_random = False
+
     def cell_period_combo_logic(self):
         self.clear_graph()
 
     def steps_quantity_logic(self):
-        self.steps = self.steps_quantity.text()
+        text = self.steps_quantity.text()
+        if text:
+            self.steps = int(text)
+        else:
+            self.steps = 5000
+
+    def graph_interval_logic(self):
+        text = self.graph_interval_edit.text()
+        if text:
+            self.graph_interval = int(text)
+        else:
+            self.graph_interval = 25
 
     def add_mpl(self):
-        self.canvas = MplCanvas(self.calc_b())
-        self.toolbar = NavigationToolbar(self.canvas, self.canvas)
+        # Анимация
+        self.canvas = MplAnimation(self.calc_b())
+        spacer = QtWidgets.QSpacerItem(20, 20, QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.toolbar = NavigationToolbar(self.canvas, self.canvas, coordinates=False)
+        self.verticalLayout_10.addWidget(self.toolbar)
         self.verticalLayout_10.addWidget(self.canvas)
+
+        # Графики
+        self.graphics = MplGraphics()
+        self.toolbar = NavigationToolbar(self.graphics, self.graphics, coordinates=True)
+        self.verticalLayout_11.addWidget(self.toolbar)
+        self.verticalLayout_11.addWidget(self.graphics)
 
     def set_start_config(self):
         # Конфигурация системы
@@ -370,7 +341,9 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
                                          float(self.a_parameter_edit.text()),
                                          self.calc_b(),
                                          float(self.timestep_parameter_edit.text()),
-                                         self.canvas)
+                                         self.canvas,
+                                         self.is_coords_random,
+                                         self.is_speeds_random)
         self.draw_graph()
 
     def draw_graph(self, title=""):
@@ -379,14 +352,36 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         self.canvas.plot_configuration(self.cfg.configuration, title)
         self.canvas.draw()
         self.canvas.flush_events()
-        time.sleep(0.1)
+        time.sleep(0.001)
+
+    def draw_plot1(self, x, y):
+        self.graphics.add_dot_ax1(x, y)
+        self.graphics.draw()
+        self.graphics.flush_events()
+        time.sleep(0.001)
+
+    def draw_plot2(self, x, y):
+        self.graphics.add_dot_ax2(x, y)
+        self.graphics.draw()
+        self.graphics.flush_events()
+        time.sleep(0.001)
 
     def clear_graph(self):
+        self.cfg = None
         self.canvas.clear_plot(self.calc_b())
         self.is_started = False
         self.paused = False
         self.frame = 0
         self.canvas.draw()
+        self.graphics.clear_plot()
+        self.graphics.draw()
+        self.average_t = 0.0
+        self.average_e = 0.0
+        self.x_values_e = []
+        self.y_values_e = []
+        self.x_values_t = []
+        self.y_values_t = []
+        self.counter = 0
 
     def calc_b(self):
         b = self.cell_period_combo.currentText()
@@ -394,19 +389,48 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         return b
 
     def calculation(self):
+        # Расчет параметров на новом временном шаге
         self.cfg.calculate_verle()
         self.cfg.calculate_kinetic()
         self.cfg.calculate_potential()
         self.cfg.calculate_full_energy()
+        self.cfg.calculate_temperature()
+
+        self.average_e += self.cfg.E
+        self.average_t += self.cfg.temperature
+        self.counter += 1
+
+        # Вывод начальной потенциальной энергии системы
+        if self.frame == 0:
+            potential = str(self.cfg.Ep)
+            self.start_potential_edit.setText(potential)
+
         self.frame += 1
-        if self.frame % 25 == 0:
+        if self.frame % self.graph_interval == 0:
             self.draw_graph("Временной шаг: %s" % str(self.frame))
-        if self.frame >= int(self.steps):
+
+            self.average_e /= self.counter
+            self.x_values_e.append(self.frame)
+            self.y_values_e.append(self.average_e)
+
+            self.draw_plot1(self.x_values_e, self.y_values_e)
+            if self.frame >= 500:
+                self.average_t /= self.counter
+
+                self.x_values_t.append(self.frame)
+                self.y_values_t.append(self.average_t)
+                self.draw_plot2(self.x_values_t, self.y_values_t)
+
+            self.average_e = 0.0
+            self.average_t = 0.0
+            self.counter = 0
+
+        if self.frame >= self.steps:
             self.thread.is_finished = True
             self.thread.stop()
 
     def start_button_logic(self):
-        if len(self.cfg.configuration) > 0 and self.frame < int(self.steps):
+        if self.cfg is not None and self.frame < self.steps:
             if not self.thread.is_started:
                 self.thread.start()
             elif self.thread.is_stopped() and self.thread.is_finished:
@@ -420,6 +444,19 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         if self.thread.is_started and not self.thread.is_stopped():
             self.thread.stop()
             self.thread.is_finished = True
+
+    def keyPressEvent(self, event):
+        super(Interface, self).keyPressEvent(event)
+
+        if event.key() == QtCore.Qt.Key.Key_F11:
+            if self.isMaximized():
+                self.showNormal()
+            else:
+                self.showMaximized()
+
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            self.stop_button.click()
+            self.close()
 
 class StoppableThread(threading.Thread):
     """ Поток для вычисления переданной функции """
