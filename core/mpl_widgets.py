@@ -69,6 +69,7 @@ class MplAnimation(FigureCanvas):
         y_ticks = list(self.ax.get_yticks())
         return x_ticks, y_ticks
 
+
 class MplGraphics(FigureCanvas):
     """ Функция отрисовки """
     def __init__(self, dpi=100):
@@ -90,29 +91,58 @@ class MplGraphics(FigureCanvas):
         self.ax1.set_ylabel("Энергия, Дж")
 
         self.ax2.set_xlabel("Временной шаг, с")
-        self.ax2.set_ylabel("Температура, °C")
+        self.ax2.set_ylabel("Температура, K")
 
         self.ax1.grid(linestyle="dotted", alpha=0.65)
         self.ax2.grid(linestyle="dotted", alpha=0.65)
 
     def add_dot_ax1(self, x, y):
         self.ax1.plot(x, y, linestyle="dotted", marker="o", markersize=3, color='r')
-        # ymin, ymax = min(y), max(y)
-        # xmax, xmin = max(x), min(x)
-        # additive_x = (xmax - xmin) * 0.1
-        # additive_y = 0.5 * ymax
-        # self.ax1.set_xlim(xmin, xmax + additive_x)
-        # self.ax1.set_ylim(ymin - additive_y, ymax + additive_y)
+
+        # Для отчета.
+        # self.ax1.autoscale(False)
+        # self.ax1.set_ylim([-3.3e-19, -2.7e-19])
+        # self.ax1.set_xlim([min(x), max(x)])
 
     def add_dot_ax2(self, x, y):
         self.ax2.plot(x, y, linestyle="dotted", marker="o", markersize=3, color='b')
+
+        # Для отчета.
+        # self.ax2.autoscale(False)
+        # self.ax2.set_ylim([-20, 55])
+        # self.ax2.set_xlim([min(x), max(x)])
 
     def clear_plot(self):
         self.ax1.clear()
         self.ax2.clear()
         self.add_text()
 
-    def get_ticks(self):
-        x_ticks = list(self.ax.get_xticks())
-        y_ticks = list(self.ax.get_yticks())
-        return x_ticks, y_ticks
+
+class MplResearch(FigureCanvas):
+    """ Функция отрисовки """
+    def __init__(self, dpi=100):
+        self.fig = Figure(dpi=dpi, facecolor=(.94, .94, .94), figsize=(7, 3))
+
+        # Добавление области графа
+        self.ax = self.fig.add_subplot(111)
+        self.add_text()
+
+        # Инициализация
+        FigureCanvas.__init__(self, self.fig)
+        FigureCanvas.setSizePolicy(self, QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        FigureCanvas.updateGeometry(self)
+
+    def add_text(self):
+        self.ax.set_title("Зависимость скорости испарения капли от температуры")
+        self.ax.set_xlabel("Температура, K")
+        self.ax.set_ylabel("Количество оторвавшихся частиц, шт")
+
+        self.ax.grid(linestyle="dotted", alpha=0.65)
+
+    def add_dot_ax(self, x, y):
+        self.ax.plot(x, y, linestyle="None", marker="v", markersize=6,
+                     markeredgecolor='blue', markerfacecolor="None")
+
+    def clear_plot(self):
+        self.ax.clear()
+        self.add_text()

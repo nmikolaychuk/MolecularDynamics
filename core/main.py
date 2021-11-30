@@ -1,235 +1,170 @@
-import random
-
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from mpl_widgets import MplAnimation, MplGraphics
+from mpl_widgets import MplAnimation, MplGraphics, MplResearch
 from PyQt5 import QtWidgets, QtCore
 from global_variables import *
+import interface_research_app
 import interface_main_app
 import matplotlib
 import threading
-import math
 import sys
 import time
 matplotlib.use('QT5Agg')
 
 
-class ParticleConfiguration:
-    def __init__(self, particles_quantity, a_parameter, b_parameter,
-                 time_step, canvas, is_coords_rand, is_speeds_rand):
-        self.particles_quantity = particles_quantity
-        self.a = a_parameter
-        self.b = b_parameter
-        self.time_step = time_step
-        self.canvas = canvas
-        # Чекпоинты для внесения случайности в значения
-        self.is_coords_random = is_coords_rand
-        self.is_speeds_random = is_speeds_rand
-        self.rand_percent = 0.05
-        self.speeds_range_rand = 60
+class ResearchApp(QtWidgets.QMainWindow, interface_research_app.Ui_MainWindow):
+    """ Класс-реализация окна исследования """
+    def __init__(self, parent_object):
+        QtWidgets.QMainWindow.__init__(self)
+        self.setupUi(self)
+        # Конфигурация окна приложения
+        self.setWindowFlags(QtCore.Qt.WindowType.CustomizeWindowHint |
+                            QtCore.Qt.WindowType.WindowCloseButtonHint |
+                            QtCore.Qt.WindowType.WindowMinimizeButtonHint)
+        self.setWindowFlag(QtCore.Qt.WindowType.WindowMaximizeButtonHint)
+        self.parent_object = parent_object
+        self.parent_object.is_research_running = True
+        self.add_mpl()
 
-        self.ticks, _ = self.canvas.get_ticks()
-        self.configuration = []
-        self.configure_particles()
-        self.start_summary_pulse()
+        # Гиперпараметры для системы
+        self.b_start_value = 0.9
+        self.b_step_value = 0.02
+        self.b_steps_quantity = 30
+        self.iter_quantity = STEPS
+        self.time_step = 0.01 * TAO
+        self.particles_quantity = 100
+        self.is_random_coords = False
+        self.is_random_speeds = False
+        self.current_out = 0
+        self.current_step = 0
+        self.sum_temperature = 0.0
 
-        # Энергии
-        self.E = 0.0
-        self.Ek = 0.0
-        self.Ep = 0.0
-        self.temperature = 0.0
+        self.research_steps.setText(str(self.iter_quantity))
+        self.research_steps.textChanged.connect(self.steps_quantity_logic)
 
-        self.calculate_potential_for_particle()
-        self.calculate_forces()
+        # Инициализируем конфигурацию частиц
+        self.config = None
+        self.x_values = []
+        self.y_values = []
 
-    def configure_particles(self):
-        configuration_coordinates = []
-        # ВАЖНО! Рассматривается ТОЛЬКО число частиц формата n*n
-        particles_count_in_line = round(math.sqrt(self.particles_quantity))
-        for i in range(0, particles_count_in_line):
-            middle_index = math.trunc(len(self.ticks) / 2)
-            configuration_coordinates.append(self.ticks[middle_index])
-            self.ticks.pop(middle_index)
+        self.research_thread = StoppableThread(self.calculate_research)
 
-        for coord_y in configuration_coordinates:
-            for coord_x in configuration_coordinates:
-                particle = Particle(coord_x, coord_y)
-                x, y, rad = particle.transform_screen_to_world()
+        self.start_button.clicked.connect(self.start_calculation)
+        self.stop_button.clicked.connect(self.stop_calculation)
+        self.clear_plot.clicked.connect(self.clear_plot_logic)
 
-                if self.is_coords_random:
-                    rand_range = self.b * self.rand_percent
-                    x_rand = random.uniform(-rand_range, rand_range)
-                    y_rand = random.uniform(-rand_range, rand_range)
-                    x += x_rand
-                    y += y_rand
+        self.title_text = "Зависимость скорости испарения капли от температуры"
 
-                particle.x = x
-                particle.y = y
+    def clear_plot_logic(self):
+        self.stop_calculation()
+        self.x_values.clear()
+        self.y_values.clear()
+        self.graphics.clear_plot()
+        self.graphics.draw()
+        self.current_out = 0
+        self.current_step = 0
+        self.sum_temperature = 0.0
 
-                if self.is_speeds_random:
-                    x_rand = random.uniform(-self.speeds_range_rand, self.speeds_range_rand)
-                    y_rand = random.uniform(-self.speeds_range_rand, self.speeds_range_rand)
-                    particle.vx = x_rand
-                    particle.vy = y_rand
+    def steps_quantity_logic(self):
+        self.iter_quantity = int(self.research_steps.text())
 
-                self.configuration.append(particle)
+    def add_mpl(self):
+        # Графики
+        self.graphics = MplResearch()
+        self.toolbar = NavigationToolbar(self.graphics, self.graphics, coordinates=True)
+        self.verticalLayout.addWidget(self.toolbar)
+        self.horizontal_layout_graphics.addWidget(self.graphics)
 
-    def start_summary_pulse(self):
-        vx_sum = 0.0
-        vy_sum = 0.0
-        for particle in self.configuration:
-            vx_sum += particle.vx
-            vy_sum += particle.vy
+    def research_inner_loop(self, print_text):
+        # Расчет 5000 итераций для выбранного b
+        self.sum_temperature = 0.0
+        for iter in range(self.current_step, self.iter_quantity):
+            sys.stdout.write(print_text + "; Текущий шаг: %s" % iter)
+            sys.stdout.flush()
+            if self.research_thread.is_stopped():
+                self.current_step = iter
+                return
 
-        particles_count = len(self.configuration)
-        vx_sum /= particles_count
-        vy_sum /= particles_count
+            self.config.calculate_next_time_step()
+            if iter >= 500:
+                self.sum_temperature += self.config.temperature
 
-        for particle in self.configuration:
-            particle.vx -= vx_sum
-            particle.vy -= vy_sum
+        self.current_step = 0
 
-        print(vx_sum, vy_sum)
+        # Средняя температура
+        self.sum_temperature /= (self.iter_quantity - 500)
+        self.x_values.append(self.sum_temperature)
 
-    # Расчет энергий
-    def calculate_kinetic(self):
-        sum_v = 0.0
-        for i, particle in enumerate(self.configuration):
-            sum_v += particle.vx ** 2 + particle.vy ** 2
-        kinetic_energy = PARTICLE_MASS / 2.
-        kinetic_energy *= sum_v
-        self.Ek = kinetic_energy
-        # print("Кинетическая энергия: ", self.Ek)
+        # Количество испарившихся частиц
+        evaporated_particles = self.particles_quantity - len(self.config.configuration)
+        self.y_values.append(evaporated_particles)
 
-    def distance(self, particle1, particle2):
-        """ Расстояние между частицами """
-        dx = particle2.x - particle1.x
-        dy = particle2.y - particle1.y
-        distance = math.sqrt(dx ** 2 + dy ** 2)
-        return distance
+        self.draw_plot(self.x_values, self.y_values)
 
-    def calculate_cutoff_ratio(self, distance):
-        """ Вычисление коэффициента обрезания """
-        if distance <= R1:
-            return 1
-        elif R1 <= distance <= R2:
-            upper = distance - R1
-            lower = R1 - R2
-            buffer = (upper / lower) ** 2
-            result = (1 - buffer) ** 2
-            return result
-        elif distance >= R2:
-            return 0
+        with open("../research.txt", mode="a") as f:
+            f.write(str(evaporated_particles) + ", " + str(self.sum_temperature) + "\n")
+        f.close()
 
-    def potential_of_lennard_jones(self, particle1, particle2):
-        """ Вычисление модифицированного потенциала Л-Д """
-        # Обозначение переменных
-        e = D
-        sigma = self.a
-        root_of = 6
-        sigma = sigma / 2 ** (1/float(root_of))
-        distance = self.distance(particle1, particle2)
-        K = self.calculate_cutoff_ratio(distance)
+    def calculate_research(self):
+        # Гиперпараметры исследования
+        for number in range(self.current_out, self.b_steps_quantity + 1):
+            # Создание конфигурации
+            self.config = ParticleConfiguration(self.particles_quantity,
+                                                PARTICLE_DIAMETER,
+                                                PARTICLE_DIAMETER,
+                                                self.time_step,
+                                                is_coords_rand=True,
+                                                is_speeds_rand=True)
 
-        # Вычисление потенциала
-        buffer_first = (sigma / distance) ** 12
-        buffer_second = (sigma / distance) ** 6
-        potential = 4 * e * (buffer_first - buffer_second) * K
-        return potential
+            print_text = "\rТекущий эксперимент: %s" % self.current_out
+            self.research_inner_loop(print_text)
 
-    def calculate_potential(self):
-        potential_energy = 0.0
-        for i, i_particle in enumerate(self.configuration):
-            for j, j_particle in enumerate(self.configuration):
-                if i < j:
-                    potential_energy += self.potential_of_lennard_jones(i_particle, j_particle)
+            if self.research_thread.is_stopped():
+                self.current_out = number
+                break
 
-        self.Ep = potential_energy
-        # print("Потенциальная энергия: ", self.Ep)
+            self.current_out += 1
 
-    def calculate_full_energy(self):
-        self.E = self.Ek + self.Ep
-        # print("Полная энергия: ", self.E)
+        self.research_thread.is_finished = True
+        self.research_thread.stop()
 
-    def calculate_temperature(self):
-        v_sum = 0.0
-        for particle in self.configuration:
-            v_sum += particle.vx ** 2 + particle.vy ** 2
+    def start_calculation(self):
+        if not self.research_thread.is_started:
+            self.research_thread.start()
+        elif self.research_thread.is_stopped() and self.research_thread.is_finished:
+            self.research_thread = StoppableThread(self.calculate_research)
+            self.research_thread.start()
+        else:
+            print("[+] Нет размещенных частиц или закончились шаги по времени!")
 
-        upper = v_sum * self.configuration[0].mass
-        lower = 2.0 * len(self.configuration) * K_B
-        self.temperature = upper / lower
-        self.temperature -= 273.15
-        # print("Температура в системе: ", self.temperature)
-        # print('\n')
+    def stop_calculation(self):
+        if self.research_thread.is_started and not self.research_thread.is_stopped():
+            print("stop")
+            self.research_thread.stop()
+            self.research_thread.is_finished = True
 
-    # Расчет сил, координат и скоростей
-    def calculate_potential_for_particle(self):
-        """ Расчет потецниальной энергии для каждой частицы """
-        for i, i_particle in enumerate(self.configuration):
-            potential = 0.0
-            for j, j_particle in enumerate(self.configuration):
-                if i != j:
-                    potential += self.potential_of_lennard_jones(i_particle, j_particle)
-            i_particle.Ep = potential
+    def draw_plot(self, x, y, title="Зависимость скорости испарения капли от температуры"):
+        self.graphics.add_dot_ax(x, y)
+        self.graphics.ax.set_title(title)
+        self.graphics.draw()
+        self.graphics.flush_events()
+        time.sleep(0.001)
 
-    def calculate_forces(self):
-        """ Расчет сил """
-        r0_6 = PARTICLE_DIAMETER ** 6
-        for i, i_particle in enumerate(self.configuration):
-            du_dx_sum = 0.0
-            du_dy_sum = 0.0
-            for j, j_particle in enumerate(self.configuration):
-                if i != j:
-                    # Квадрат расстояния между центрами i и j частицы
-                    rij_2 = (i_particle.x - j_particle.x) ** 2 + (i_particle.y - j_particle.y) ** 2
-                    buffer_x = (i_particle.x - j_particle.x) / rij_2 ** 4
-                    buffer_y = (i_particle.y - j_particle.y) / rij_2 ** 4
-                    # Рассчет обрезающего множителя
-                    dist = self.distance(i_particle, j_particle)
-                    K = self.calculate_cutoff_ratio(dist)
-                    du_dx_sum += (r0_6 / rij_2 ** 3 - 1) * buffer_x * K
-                    du_dy_sum += (r0_6 / rij_2 ** 3 - 1) * buffer_y * K
 
-            du_dx = -12 * D * r0_6 * du_dx_sum
-            du_dy = -12 * D * r0_6 * du_dy_sum
-            i_particle.Fx = -du_dx
-            i_particle.Fy = -du_dy
+    def keyPressEvent(self, event):
+        super(ResearchApp, self).keyPressEvent(event)
 
-    def calculate_verle(self):
-        """ Скоростная форма алгоритма Верле """
-        Fk_x = []
-        Fk_y = []
-        for i_particle in self.configuration:
-            # Расчет координат
-            # Координата X
-            accel_x = i_particle.Fx / (2 * i_particle.mass)
-            accel_x *= self.time_step ** 2
-            x_new = i_particle.x + i_particle.vx * self.time_step + accel_x
-            i_particle.x = x_new
-            Fk_x.append(i_particle.Fx)
+        if event.key() == QtCore.Qt.Key.Key_F11:
+            if self.isMaximized():
+                self.showNormal()
+            else:
+                self.showMaximized()
 
-            # Координата Y
-            accel_y = i_particle.Fy / (2 * i_particle.mass)
-            accel_y *= self.time_step ** 2
-            y_new = i_particle.y + i_particle.vy * self.time_step + accel_y
-            i_particle.y = y_new
-            Fk_y.append(i_particle.Fy)
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            self.stop_button.click()
+            self.close()
 
-        # Пересчет сил
-        self.calculate_forces()
-
-        for i, i_particle in enumerate(self.configuration):
-            # Расчет скоростей
-            # Vx
-            accel_avg_x = (i_particle.Fx + Fk_x[i]) / (2. * i_particle.mass)
-            accel_avg_x *= self.time_step
-            i_particle.vx += accel_avg_x
-
-            # Vy
-            accel_avg_y = (i_particle.Fy + Fk_y[i]) / (2. * i_particle.mass)
-            accel_avg_y *= self.time_step
-            i_particle.vy += accel_avg_y
-
+    def closeEvent(self, event):
+        self.parent_object.is_research_running = False
 
 class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
     """ Класс-реализация интерфейса """
@@ -271,6 +206,9 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
         self.stop_button.clicked.connect(self.stop_button_logic)
         self.rand_coord_check.clicked.connect(self.rand_coord_logic)
         self.rand_speed_check.clicked.connect(self.rand_speed_logic)
+        self.research_evaporation.clicked.connect(self.research_evaporation_logic)
+        self.is_research_running = False
+        self.research_object = None
 
         self.steps = STEPS
         self.graph_interval = GRAPH_INTERVAL
@@ -292,6 +230,11 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
 
         self.is_coords_random = False
         self.is_speeds_random = False
+
+    def research_evaporation_logic(self):
+        if not self.is_research_running:
+            self.research_object = ResearchApp(self)
+            self.research_object.show()
 
     def rand_coord_logic(self):
         if self.rand_coord_check.isChecked():
@@ -324,7 +267,6 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
     def add_mpl(self):
         # Анимация
         self.canvas = MplAnimation(self.calc_b())
-        spacer = QtWidgets.QSpacerItem(20, 20, QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         self.toolbar = NavigationToolbar(self.canvas, self.canvas, coordinates=False)
         self.verticalLayout_10.addWidget(self.toolbar)
         self.verticalLayout_10.addWidget(self.canvas)
@@ -341,7 +283,6 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
                                          float(self.a_parameter_edit.text()),
                                          self.calc_b(),
                                          float(self.timestep_parameter_edit.text()),
-                                         self.canvas,
                                          self.is_coords_random,
                                          self.is_speeds_random)
         self.draw_graph()
@@ -390,11 +331,7 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
 
     def calculation(self):
         # Расчет параметров на новом временном шаге
-        self.cfg.calculate_verle()
-        self.cfg.calculate_kinetic()
-        self.cfg.calculate_potential()
-        self.cfg.calculate_full_energy()
-        self.cfg.calculate_temperature()
+        self.cfg.calculate_next_time_step()
 
         self.average_e += self.cfg.E
         self.average_t += self.cfg.temperature
@@ -405,9 +342,10 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
             potential = str(self.cfg.Ep)
             self.start_potential_edit.setText(potential)
 
-        self.frame += 1
         if self.frame % self.graph_interval == 0:
-            self.draw_graph("Временной шаг: %s" % str(self.frame))
+            title_string = "Временной шаг: %s" % str(self.frame) +\
+                           "; Количество частиц: %s" % str(len(self.cfg.configuration))
+            self.draw_graph(title_string)
 
             self.average_e /= self.counter
             self.x_values_e.append(self.frame)
@@ -425,7 +363,12 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
             self.average_t = 0.0
             self.counter = 0
 
-        if self.frame >= self.steps:
+        self.frame += 1
+
+        if self.frame > self.steps or len(self.cfg.configuration) == 0:
+            title_string = "Временной шаг: %s" % str(self.frame) + \
+                           "; Количество частиц: %s" % str(len(self.cfg.configuration))
+            self.draw_graph(title_string)
             self.thread.is_finished = True
             self.thread.stop()
 
@@ -440,7 +383,6 @@ class Interface(QtWidgets.QMainWindow, interface_main_app.Ui_MainWindow):
             print("[+] Нет размещенных частиц или закончились шаги по времени!")
 
     def stop_button_logic(self):
-        print("stop")
         if self.thread.is_started and not self.thread.is_stopped():
             self.thread.stop()
             self.thread.is_finished = True
